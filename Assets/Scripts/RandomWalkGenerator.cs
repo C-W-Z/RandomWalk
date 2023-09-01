@@ -32,7 +32,8 @@ public class RandomWalkGenerator : MonoBehaviour
         [Range(0, 10)] public int Frame;
     }
 
-    [SerializeField] Tilemap tileMap;
+    [SerializeField] Tilemap floorTileMap;
+    [SerializeField] Tilemap wallTileMap;
     [SerializeField] TileBase emptyTile;
     [SerializeField] TileBase floorTile;
     [SerializeField] TileBase wallTile;
@@ -61,7 +62,8 @@ public class RandomWalkGenerator : MonoBehaviour
 
     void StartGeneration()
     {
-        tileMap.ClearAllTiles();
+        floorTileMap.ClearAllTiles();
+        wallTileMap.ClearAllTiles();
 
         tileCount = 0;
 
@@ -164,11 +166,11 @@ public class RandomWalkGenerator : MonoBehaviour
         switch (type)
         {
             case GridType.Empty:
-                tileMap.SetTile(pos, emptyTile); break;
+                wallTileMap.SetTile(pos, emptyTile); break;
             case GridType.Floor:
-                tileMap.SetTile(pos, floorTile); break;
+                floorTileMap.SetTile(pos, floorTile); break;
             case GridType.Wall:
-                tileMap.SetTile(pos, wallTile); break;
+                wallTileMap.SetTile(pos, wallTile); break;
         }
         grid[pos.x, pos.y] = type;
     }
