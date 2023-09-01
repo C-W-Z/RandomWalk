@@ -5,32 +5,44 @@ using UnityEngine.Tilemaps;
 
 public class RandomWalkGenerator : MonoBehaviour
 {
-    class Walker
+    [System.Serializable] class Walker
     {
         public Vector2Int Position;
         public Vector2Int Direction;
-        public float ChanceToChange;
-        public Walker(Vector2Int pos, Vector2Int dir, float chanceToChange){
+        public Walker (Vector2Int pos, Vector2Int dir)
+        {
             Position = pos;
             Direction = dir;
-            ChanceToChange = chanceToChange;
         }
     }
 
+    [System.Serializable] struct WalkerChance
+    {
+        [Range(0f, 1f)] public float Redirect;
+        [Range(0f, 1f)] public float Duplicate;
+        [Range(0f, 1f)] public float Die;
+    }
+
     enum GridType { Empty, Floor, Wall }
+    [System.Serializable] struct WaitTime
+    {
+        public enum TimeType { Second, Frame }
+        public TimeType Type;
+        [Range(0f, 0.1f)] public float Second;
+        [Range(0, 10)] public int Frame;
+    }
 
     [SerializeField] Tilemap tileMap;
     [SerializeField] TileBase emptyTile;
     [SerializeField] TileBase floorTile;
     [SerializeField] TileBase wallTile;
-    [SerializeField] int mapWidth = 30;
-    [SerializeField] int mapHeight = 30;
-
+    [SerializeField] Vector2Int mapSize = new(30, 30);
     [SerializeField] int maxWalkerCount = 10;
-    [SerializeField, Range(0f, 1f)] float chanceToChange = 0.5f;
     [SerializeField, Range(0f, 1f)] float fillPercentage = 0.4f;
-    [SerializeField] float waitTime = 0.05f;
-    [SerializeField] bool setEmpty = false;
+    [SerializeField] bool fillEmpty = false;
+    [SerializeField] WalkerChance walkerChance;
+    [SerializeField] WaitTime floorStepTime;
+    [SerializeField] WaitTime wallStepTime;
 
     GridType[,] grid;
     List<Walker> walkers;
@@ -44,30 +56,25 @@ public class RandomWalkGenerator : MonoBehaviour
 
     void Start()
     {
-        Initialize();
+        StartGeneration();
     }
 
-    void Initialize()
+    void StartGeneration()
     {
+        tileMap.ClearAllTiles();
+
         tileCount = 0;
 
-        grid = new GridType[mapWidth, mapHeight];
+        grid = new GridType[mapSize.x, mapSize.y];
 
         // if (default(GridType) != GridType.Empty)
-        //     for (int x = 0; x < grid.GetLength(0); x++)
-        //         for (int y = 0; y < grid.GetLength(1); y++)
+        //     for (int x = 0; x < mapSize.x; x++)
+        //         for (int y = 0; y < mapSize.y; y++)
         //             grid[x, y] = GridType.Empty;
 
-        Vector2Int center = new(grid.GetLength(0) / 2, grid.GetLength(1) / 2);
-
-        walkers = new List<Walker>();
-        Walker firstWalker = new(center, RandomDirection, 0.5f);
-
-        grid[center.x, center.y] = GridType.Floor;
-        tileMap.SetTile((Vector3Int)center, floorTile);
-        walkers.Add(firstWalker);
-
-        tileCount++;
+        Vector2Int center = new(mapSize.x / 2, mapSize.y / 2);
+        // add first walker
+        walkers = new List<Walker> { new(center, RandomDirection) };
 
         StartCoroutine(CreateFloors());
     }
@@ -76,71 +83,50 @@ public class RandomWalkGenerator : MonoBehaviour
     {
         while ((float)tileCount / grid.Length < fillPercentage)
         {
+            // iterate through all wakers reversely to avoid bugs from RemoveAt(i)
             bool hasCreatedFloor = false;
-            foreach (Walker w in walkers)
+            for (int i = walkers.Count - 1; i >= 0; i--)
             {
-                Vector3Int pos = (Vector3Int)w.Position;
-
-                if (grid[pos.x, pos.y] != GridType.Floor)
+                var w = walkers[i];
+                // create tiles
+                if (grid[w.Position.x, w.Position.y] != GridType.Floor)
                 {
-                    tileMap.SetTile(pos, floorTile);
+                    SetTile((Vector3Int)w.Position, GridType.Floor);
                     tileCount++;
-                    grid[pos.x, pos.y] = GridType.Floor;
                     hasCreatedFloor = true;
+                }
+
+                // choose what to do randomly
+                if (Random.value <= walkerChance.Redirect)
+                    w.Direction = RandomDirection;
+                if (Random.value <= walkerChance.Duplicate && walkers.Count < maxWalkerCount)
+                    walkers.Add(new(w.Position, RandomDirection));
+                if (Random.value <= walkerChance.Die && walkers.Count > 1)
+                    walkers.RemoveAt(i);
+                else
+                {
+                    // update position if not be removed
+                    w.Position += w.Direction;
+                    w.Position.x = Mathf.Clamp(w.Position.x, 1, mapSize.x - 2);
+                    w.Position.y = Mathf.Clamp(w.Position.y, 1, mapSize.y - 2);
                 }
             }
 
-            //Walker Methods
-            ChanceToRemove();
-            ChanceToRedirect();
-            ChanceToCreate();
-            UpdatePosition();
-
             if (hasCreatedFloor)
-                yield return new WaitForSeconds(waitTime);
+                if (floorStepTime.Type == WaitTime.TimeType.Second && floorStepTime.Second > 0)
+                    yield return new WaitForSeconds(floorStepTime.Second);
+                else
+                    for (int i = 0; i < floorStepTime.Frame; i++)
+                        yield return null;
         }
 
         StartCoroutine(CreateWalls());
     }
 
-    void ChanceToRemove()
-    {
-        for (int i = 0; i < walkers.Count; i++)
-            if (Random.value < walkers[i].ChanceToChange && walkers.Count > 1)
-            {
-                walkers.RemoveAt(i);
-                break;
-            }
-    }
-
-    void ChanceToRedirect()
-    {
-        foreach (Walker w in walkers)
-            if (Random.value < w.ChanceToChange)
-                w.Direction = RandomDirection;
-    }
-
-    void ChanceToCreate()
-    {
-        for (int i = 0; i < walkers.Count; i++)
-            if (Random.value < walkers[i].ChanceToChange && walkers.Count < maxWalkerCount)
-                walkers.Add(new(walkers[i].Position, RandomDirection, 0.5f));
-    }
-
-    void UpdatePosition()
-    {
-        foreach (Walker w in walkers)
-        {
-            w.Position += w.Direction;
-            w.Position.x = Mathf.Clamp(w.Position.x, 1, grid.GetLength(0) - 2);
-            w.Position.y = Mathf.Clamp(w.Position.y, 1, grid.GetLength(1) - 2);
-        }
-    }
-
     IEnumerator CreateWalls()
     {
-        for (int x = 0; x < grid.GetLength(0) - 1; x++)
-            for (int y = 0; y < grid.GetLength(1) - 1; y++)
+        for (int y = mapSize.y - 1; y >= 0; y--)
+            for (int x = 0; x < mapSize.x; x++)
                 if (grid[x, y] == GridType.Floor)
                 {
                     bool hasCreatedWall = false;
@@ -148,24 +134,42 @@ public class RandomWalkGenerator : MonoBehaviour
                     foreach (var d in EightDir)
                         if (grid[x + d.x, y + d.y] == GridType.Empty)
                         {
-                            tileMap.SetTile(new(x + d.x, y + d.y), wallTile);
-                            grid[x + d.x, y + d.y] = GridType.Wall;
+                            SetTile(new(x + d.x, y + d.y), GridType.Wall);
+                            tileCount++;
                             hasCreatedWall = true;
                         }
 
                     if (hasCreatedWall)
-                        yield return new WaitForSeconds(waitTime);
+                        if (wallStepTime.Type == WaitTime.TimeType.Second && wallStepTime.Second > 0)
+                            yield return new WaitForSeconds(wallStepTime.Second);
+                        else
+                            for (int i = 0; i < wallStepTime.Frame; i++)
+                                yield return null;
                 }
 
-        if (setEmpty)
+        if (fillEmpty)
             CreateEmpty();
     }
 
     void CreateEmpty()
     {
-        for (int x = 0; x < grid.GetLength(0); x++)
-            for (int y = 0; y < grid.GetLength(1); y++)
+        for (int x = 0; x < mapSize.x; x++)
+            for (int y = 0; y < mapSize.y; y++)
                 if (grid[x, y] == GridType.Empty)
-                    tileMap.SetTile(new(x, y), emptyTile);
+                    SetTile(new(x, y), GridType.Empty);
+    }
+
+    void SetTile(Vector3Int pos, GridType type)
+    {
+        switch (type)
+        {
+            case GridType.Empty:
+                tileMap.SetTile(pos, emptyTile); break;
+            case GridType.Floor:
+                tileMap.SetTile(pos, floorTile); break;
+            case GridType.Wall:
+                tileMap.SetTile(pos, wallTile); break;
+        }
+        grid[pos.x, pos.y] = type;
     }
 }
